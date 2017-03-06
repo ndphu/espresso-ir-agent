@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
 	"github.com/ndphu/espresso-commons"
 	"github.com/ndphu/espresso-commons/dao"
@@ -42,6 +41,7 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
+	defer MessageRouter.Stop()
 
 	// lirc
 	IREventChannel = make(chan (model.IRMessage))
@@ -65,14 +65,7 @@ func main() {
 			fmt.Println("Fail to insert event to db", err)
 		}
 
-		raw, err := json.Marshal(msg)
-		if err != nil {
-			fmt.Println("Failed to serialize message from lirc app")
-		} else {
-			fmt.Println("Got message", string(raw), "at", msg.Timestamp)
-			PushEvent(msg)
-		}
-
+		PushEvent(msg)
 	}
 
 	fmt.Println("End")
@@ -84,11 +77,11 @@ func PushEvent(msg model.IRMessage) {
 		Destination: commons.IRAgentEventTopic,
 		Type:        "IR_EVENT_ADDED",
 		Source:      "ir-agent",
-		Payload:     msg,
+		Payload:     msg.Id,
 	}
 	err := MessageRouter.Publish(eventMsg)
 	if err != nil {
-		fmt.Println("Messenger failt to publish message", err)
+		fmt.Println("Messenger failed to publish message", err)
 	} else {
 		fmt.Println("Published IR_EVENT_ADDED")
 	}

@@ -4,28 +4,26 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/ndphu/espresso-commons"
-	"github.com/ndphu/espresso-commons/db"
+	"github.com/ndphu/espresso-commons/dao"
+	"github.com/ndphu/espresso-commons/messaging"
 	"github.com/ndphu/espresso-commons/model"
+	"github.com/ndphu/espresso-commons/repo"
 	"github.com/ndphu/espresso-ir-agent/lirc"
-	"github.com/ndphu/manga-crawler/dao"
 	"gopkg.in/mgo.v2"
-	"time"
+	"os"
 )
 
 var (
-	LircUrl                                 = "192.168.1.21:8765"
-	ReconnectTimeout                        = 5
-	IREventChannel   chan (model.IRMessage) = nil
+	DefaultLircdHost                          = "127.0.0.1:8765"
+	ReconnectTimeout                          = 5
+	IREventChannel   chan (model.IRMessage)   = nil
+	MessageRouter    *messaging.MessageRouter = nil
 )
 
 func main() {
-	fmt.Println(time.Now())
-
+	// database
+	fmt.Println("Connecting to db...")
 	s, err := mgo.Dial("127.0.0.1:27017")
-	irRepo := &db.IREventRepo{
-		Session:  s,
-		Database: s.DB(commons.DBName),
-	}
 	if err != nil {
 		fmt.Println("Fail to connect to DB")
 		panic(err)
@@ -33,9 +31,27 @@ func main() {
 		fmt.Println("Connected to DB")
 	}
 
+	irRepo := &repo.IREventRepo{
+		Session:  s,
+		Database: s.DB(commons.DBName),
+	}
+	// end database
+
+	// mqtt
+	MessageRouter, err = messaging.NewMessageRouter("127.0.0.1", 1883, "", "", fmt.Sprintf("ir-agent-%d", commons.GetRandom()))
+	if err != nil {
+		panic(err)
+	}
+
+	// lirc
 	IREventChannel = make(chan (model.IRMessage))
 
-	lircApp, err := lirc.NewLirc(LircUrl, IREventChannel, ReconnectTimeout)
+	lircdHost := os.Getenv("LIRCD_HOST")
+	if len(lircdHost) == 0 {
+		lircdHost = DefaultLircdHost
+	}
+
+	lircApp, err := lirc.NewLirc(lircdHost, IREventChannel, ReconnectTimeout)
 	if err != nil {
 		panic(err)
 	}
@@ -54,10 +70,26 @@ func main() {
 			fmt.Println("Failed to serialize message from lirc app")
 		} else {
 			fmt.Println("Got message", string(raw), "at", msg.Timestamp)
+			PushEvent(msg)
 		}
 
 	}
 
 	fmt.Println("End")
 
+}
+
+func PushEvent(msg model.IRMessage) {
+	eventMsg := model.Message{
+		Destination: commons.IRAgentEventTopic,
+		Type:        "IR_EVENT_ADDED",
+		Source:      "ir-agent",
+		Payload:     msg,
+	}
+	err := MessageRouter.Publish(eventMsg)
+	if err != nil {
+		fmt.Println("Messenger failt to publish message", err)
+	} else {
+		fmt.Println("Published IR_EVENT_ADDED")
+	}
 }

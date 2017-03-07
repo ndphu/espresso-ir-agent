@@ -31,9 +31,9 @@ func main() {
 	}
 
 	irRepo := &repo.IREventRepo{
-		Session:  s,
-		Database: s.DB(commons.DBName),
+		Session: s,
 	}
+
 	// end database
 
 	// mqtt
@@ -44,7 +44,7 @@ func main() {
 	defer MessageRouter.Stop()
 
 	// lirc
-	IREventChannel = make(chan (model.IRMessage))
+	IREventChannel = make(chan (model.IRMessage), 1024)
 
 	lircdHost := os.Getenv("LIRCD_HOST")
 	if len(lircdHost) == 0 {
@@ -63,9 +63,11 @@ func main() {
 		err := dao.Insert(irRepo, &msg)
 		if err != nil {
 			fmt.Println("Fail to insert event to db", err)
+			fmt.Println("Trying to refresh the session")
+			irRepo.Session.Refresh()
+		} else {
+			PushEvent(msg)
 		}
-
-		PushEvent(msg)
 	}
 
 	fmt.Println("End")

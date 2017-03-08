@@ -60,13 +60,16 @@ func main() {
 
 	for {
 		msg := model.IRMessage(<-IREventChannel)
-		fmt.Println("Got IR message. Inserting...")
-		err := dao.Insert(irRepo, &msg)
-		if err != nil {
-			fmt.Println("Fail to insert event to db. This event will be discarded")
-			fmt.Println(err)
-		} else {
-			PushEvent(msg)
+		// ignore repeated event
+		if msg.Repeat == 0 {
+			fmt.Println("Got IR message. Inserting...")
+			err := dao.Insert(irRepo, &msg)
+			if err != nil {
+				fmt.Println("Fail to insert event to db. This event will be discarded")
+				fmt.Println(err)
+			} else {
+				PushEvent(msg)
+			}
 		}
 	}
 

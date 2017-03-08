@@ -23,6 +23,7 @@ func main() {
 	// database
 	fmt.Println("Connecting to db...")
 	s, err := mgo.Dial("127.0.0.1:27017")
+
 	if err != nil {
 		fmt.Println("Fail to connect to DB")
 		panic(err)
@@ -59,12 +60,11 @@ func main() {
 
 	for {
 		msg := model.IRMessage(<-IREventChannel)
-
+		fmt.Println("Got IR message. Inserting...")
 		err := dao.Insert(irRepo, &msg)
 		if err != nil {
-			fmt.Println("Fail to insert event to db", err)
-			fmt.Println("Trying to refresh the session")
-			irRepo.Session.Refresh()
+			fmt.Println("Fail to insert event to db. This event will be discarded")
+			fmt.Println(err)
 		} else {
 			PushEvent(msg)
 		}

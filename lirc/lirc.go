@@ -1,7 +1,7 @@
 package lirc
 
 import (
-	"github.com/ndphu/espresso-commons/model"
+	"github.com/ndphu/espresso-commons/model/event"
 	"github.com/ndphu/lirc"
 	"log"
 	"time"
@@ -9,13 +9,13 @@ import (
 
 type Lirc struct {
 	LircHost         string
-	IREventChannel   chan (model.IRMessage)
+	IREventChannel   chan (event.IREvent)
 	Running          bool
 	IRRouter         *lirc.Router
 	ReconnectTimeout int
 }
 
-func NewLirc(host string, channel chan (model.IRMessage), timeout int) (*Lirc, error) {
+func NewLirc(host string, channel chan (event.IREvent), timeout int) (*Lirc, error) {
 	return &Lirc{
 		LircHost:         host,
 		IREventChannel:   channel,
@@ -47,7 +47,7 @@ func (l *Lirc) loop() error {
 			l.IRRouter = ir
 			log.Println("Connected to lircd at", l.LircHost)
 			l.IRRouter.Handle("", "", func(e lirc.Event) {
-				m := model.IRMessage{
+				m := event.IREvent{
 					RemoteName: e.Remote,
 					Button:     e.Button,
 					Code:       e.Code,

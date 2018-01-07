@@ -1,57 +1,62 @@
 package main
 
 import (
+	"encoding/json"
+	"errors"
 	"fmt"
 	"github.com/ndphu/espresso-commons"
-	"github.com/ndphu/espresso-commons/dao"
 	"github.com/ndphu/espresso-commons/messaging"
-	"github.com/ndphu/espresso-commons/model"
-	"github.com/ndphu/espresso-commons/repo"
+	"github.com/ndphu/espresso-commons/model/event"
 	"github.com/ndphu/espresso-ir-agent/lirc"
-	"gopkg.in/mgo.v2"
-	"os"
+	"log"
+	"strconv"
 )
 
 var (
-	DefaultLircdHost                          = "127.0.0.1:8765"
-	ReconnectTimeout                          = 5
-	IREventChannel   chan (model.IRMessage)   = nil
-	MessageRouter    *messaging.MessageRouter = nil
+	DefaultLircdHost                           = "192.168.1.22:8765"
+	DefaultBrokerHost                          = "19november.freeddns.org"
+	DefaultBrokerPort                          = "5384"
+	ReconnectTimeout                           = 5
+	IREventChannel    chan (event.IREvent)     = nil
+	MessageRouter     *messaging.MessageRouter = nil
+	DeviceSerial                               = ""
+	EventTopic        messaging.Topic          = ""
 )
 
 func main() {
-	// database
-	fmt.Println("Connecting to db...")
-	s, err := mgo.Dial("127.0.0.1:27017")
-
-	if err != nil {
-		fmt.Println("Fail to connect to DB")
-		panic(err)
-	} else {
-		fmt.Println("Connected to DB")
-	}
-
-	irRepo := &repo.IREventRepo{
-		Session: s,
-	}
-
-	// end database
-
 	// mqtt
-	MessageRouter, err = messaging.NewMessageRouter("127.0.0.1", 1883, "", "", fmt.Sprintf("ir-agent-%d", commons.GetRandom()))
+	mqttHost := commons.GetEnv("MSG_BROKER_HOST", DefaultBrokerHost)
+	mqttPort, _ := strconv.Atoi(commons.GetEnv("MSG_BROKER_PORT", DefaultBrokerPort))
+
+	MessageRouter, err := messaging.NewMessageRouter(mqttHost, mqttPort, "", "", fmt.Sprintf("ir-agent-%d", commons.GetRandom()))
 	if err != nil {
 		panic(err)
 	}
 	defer MessageRouter.Stop()
 
-	// lirc
-	IREventChannel = make(chan (model.IRMessage), 1024)
-
-	lircdHost := os.Getenv("LIRCD_HOST")
-	if len(lircdHost) == 0 {
-		lircdHost = DefaultLircdHost
+	if MessageRouter.GetMQTTClient().IsConnected() {
+		log.Println("MQTT connected!")
+	} else {
+		panic(errors.New("MQTT not connected"))
 	}
 
+	// Device serial
+	if commons.GetEnv("PLATFORM", "") == "rpi" {
+		DeviceSerial, err = commons.RPiGetSerial("/proc/cpuinfo")
+		if err != nil {
+			panic(err)
+		}
+	} else {
+		DeviceSerial = "development"
+	}
+	log.Printf("Device Serial: [%s]\n", DeviceSerial)
+
+	EventTopic = messaging.Topic(fmt.Sprintf("eps/device/%s/event/ir", DeviceSerial))
+
+	// lirc
+	IREventChannel = make(chan (event.IREvent), 1024)
+
+	lircdHost := commons.GetEnv("LIRCD_HOST", DefaultLircdHost)
 	lircApp, err := lirc.NewLirc(lircdHost, IREventChannel, ReconnectTimeout)
 	if err != nil {
 		panic(err)
@@ -59,35 +64,25 @@ func main() {
 	lircApp.Start()
 
 	for {
-		msg := model.IRMessage(<-IREventChannel)
+		msg := event.IREvent(<-IREventChannel)
 		// ignore repeated event
 		if msg.Repeat == 0 {
-			fmt.Println("Got IR message. Inserting...")
-			err := dao.Insert(irRepo, &msg)
+			log.Println("Got IR message")
+			b, _ := json.Marshal(msg)
+			log.Printf("%s\n", string(b))
+			eventMsg := messaging.Message{
+				Destination: EventTopic,
+				Type:        "IR_EVENT",
+				Source:      "ir-agent",
+				Payload:     string(b),
+			}
+			err := MessageRouter.Publish(eventMsg)
 			if err != nil {
-				fmt.Println("Fail to insert event to db. This event will be discarded")
-				fmt.Println(err)
+				log.Println("Messenger failed to publish message: ", err)
 			} else {
-				PushEvent(msg)
+				log.Println("Published.")
 			}
 		}
 	}
-
-	fmt.Println("End")
-
-}
-
-func PushEvent(msg model.IRMessage) {
-	eventMsg := model.Message{
-		Destination: commons.IRAgentEventTopic,
-		Type:        "IR_EVENT_ADDED",
-		Source:      "ir-agent",
-		Payload:     msg.Id,
-	}
-	err := MessageRouter.Publish(eventMsg)
-	if err != nil {
-		fmt.Println("Messenger failed to publish message", err)
-	} else {
-		fmt.Println("Published IR_EVENT_ADDED")
-	}
+	log.Println("End")
 }
